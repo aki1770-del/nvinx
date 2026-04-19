@@ -1,4 +1,5 @@
 """Data model for hardware and model specifications consumed by patterns."""
+
 from __future__ import annotations
 
 from dataclasses import dataclass, field

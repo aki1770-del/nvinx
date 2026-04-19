@@ -1,5 +1,10 @@
 # nvinx
 
+[![CI](https://github.com/aki1770-del/nvinx/actions/workflows/ci.yml/badge.svg)](https://github.com/aki1770-del/nvinx/actions/workflows/ci.yml)
+[![PyPI](https://img.shields.io/pypi/v/nvinx.svg)](https://pypi.org/project/nvinx/)
+[![Python](https://img.shields.io/pypi/pyversions/nvinx.svg)](https://pypi.org/project/nvinx/)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+
 > **Your 4 GB GPU is not idle during a long inference — it's a scheduling constraint.**
 
 When a single model saturates a small GPU for hours, the CPU, system RAM, and the wall clock are still available. Most research tooling doesn't schedule against those idle resources — it just waits. `nvinx` is three small, composable patterns that turn "wait" into "work" on limited-VRAM benches.
@@ -211,14 +216,17 @@ Star the repo if you find the reframe useful — it's the signal that tells us t
 
 ---
 
-## Running the tests
+## Running the tests and linters
 
 ```bash
 pip install -e ".[dev]"
-pytest
+
+pytest              # 8 smoke tests
+ruff format --check .
+ruff check .
 ```
 
-Eight smoke tests covering the three patterns' happy paths, error paths, and boundary cases. Tests live in `tests/test_patterns.py`.
+Eight smoke tests covering the three patterns' happy paths, error paths, and boundary cases. Tests live in `tests/test_patterns.py`. CI runs on every push and PR across Python 3.10–3.12.
 
 ---
 

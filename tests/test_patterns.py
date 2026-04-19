@@ -1,4 +1,5 @@
 """Smoke tests for the three scheduling patterns."""
+
 import pytest
 
 from nvinx.catalog import HardwareSpec, ModelSpec, Residency
@@ -8,9 +9,7 @@ HW_4GB = HardwareSpec(vram_gb=4.0, ram_gb=32.0, cpu_cores=8)
 
 
 def test_serial_handoff_places_cpu_candidates_in_parallel():
-    gpu_job = ModelSpec(
-        name="basecaller", vram_gb=3.0, residency=Residency.GPU_EXCLUSIVE
-    )
+    gpu_job = ModelSpec(name="basecaller", vram_gb=3.0, residency=Residency.GPU_EXCLUSIVE)
     cpu_jobs = [
         ModelSpec(name="variant_caller", vram_gb=0.0, residency=Residency.CPU_ONLY),
         ModelSpec(name="report_writer", vram_gb=0.0, residency=Residency.CPU_ONLY),
@@ -29,9 +28,7 @@ def test_serial_handoff_rejects_non_exclusive_gpu_job():
 
 
 def test_serial_handoff_rejects_oversized_gpu_job():
-    oversized = ModelSpec(
-        name="giant", vram_gb=8.0, residency=Residency.GPU_EXCLUSIVE
-    )
+    oversized = ModelSpec(name="giant", vram_gb=8.0, residency=Residency.GPU_EXCLUSIVE)
     with pytest.raises(ValueError, match="VRAM"):
         serial_handoff(oversized, [], HW_4GB)
 

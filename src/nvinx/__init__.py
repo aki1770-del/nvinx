@@ -1,4 +1,5 @@
 """nvinx — nginx-style workload scheduler for limited-VRAM GPU bench setups."""
+
 from nvinx.catalog import HardwareSpec, ModelSpec, Residency, SchedulingPlan
 from nvinx.patterns import fractional_coresidency, ram_overflow, serial_handoff
 

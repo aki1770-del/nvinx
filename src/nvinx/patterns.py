@@ -11,6 +11,7 @@ A        One GPU-exclusive job saturates the card   Run CPU-only work in paralle
 B        Multiple small-VRAM models fit together    Pack into the VRAM budget
 C        A single model exceeds the VRAM budget     Offload layers to system RAM
 """
+
 from __future__ import annotations
 
 from nvinx.catalog import HardwareSpec, ModelSpec, Residency, SchedulingPlan
@@ -118,8 +119,7 @@ def fractional_coresidency(
     budget = hw.vram_gb - headroom_gb
     if budget <= 0:
         raise ValueError(
-            f"VRAM budget after {headroom_gb} GB headroom is non-positive "
-            f"(vram_gb={hw.vram_gb})"
+            f"VRAM budget after {headroom_gb} GB headroom is non-positive (vram_gb={hw.vram_gb})"
         )
 
     sorted_candidates = sorted(candidates, key=lambda m: m.vram_gb, reverse=True)
@@ -194,18 +194,14 @@ def ram_overflow(
         requirement exceeds hardware.
     """
     if not model.ram_overflow_supported:
-        raise ValueError(
-            f"{model.name} does not declare ram_overflow_supported=True"
-        )
+        raise ValueError(f"{model.name} does not declare ram_overflow_supported=True")
     if model.ram_gb_needed is None:
         raise ValueError(
-            f"{model.name} has ram_overflow_supported=True "
-            f"but no ram_gb_needed declared"
+            f"{model.name} has ram_overflow_supported=True but no ram_gb_needed declared"
         )
     if model.ram_gb_needed > hw.ram_gb:
         raise ValueError(
-            f"{model.name} needs {model.ram_gb_needed} GB RAM "
-            f"but hardware has only {hw.ram_gb} GB"
+            f"{model.name} needs {model.ram_gb_needed} GB RAM but hardware has only {hw.ram_gb} GB"
         )
 
     gpu_budget_gb = max(0.0, hw.vram_gb - headroom_gb)
