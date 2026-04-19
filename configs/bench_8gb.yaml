@@ -1,0 +1,42 @@
+# 8 GB VRAM bench — mid-range research workstation.
+#
+# Typical hardware: RTX A2000 (8 GB VRAM), RTX 3060 Ti, or laptop with a mid-tier
+# mobile GPU. Headroom for larger co-resident models and a broader range of
+# single-GPU workloads.
+
+hardware:
+  vram_gb: 8.0
+  ram_gb: 64.0
+  cpu_cores: 12
+
+models:
+  # Larger long-running GPU job
+  - name: long_inference
+    vram_gb: 7.0
+    residency: GPU_EXCLUSIVE
+
+  # Multiple mid-size models that can co-reside in 8 GB
+  - name: classifier_b
+    vram_gb: 2.0
+    residency: GPU_SHARED
+
+  - name: embedder
+    vram_gb: 0.5
+    residency: GPU_SHARED
+
+  - name: reranker
+    vram_gb: 2.5
+    residency: GPU_SHARED
+
+  - name: summarizer
+    vram_gb: 2.0
+    residency: GPU_SHARED
+
+  # CPU-only support
+  - name: data_ingest
+    vram_gb: 0.0
+    residency: CPU_ONLY
+
+  - name: vector_index_build
+    vram_gb: 0.0
+    residency: CPU_ONLY

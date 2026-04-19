@@ -1,0 +1,42 @@
+# 24 GB VRAM bench — consumer high-VRAM workstation.
+#
+# Typical hardware: RTX 3090, RTX 4090, or L4. Enough VRAM to run most
+# research-scale models directly; the patterns still apply when multiple
+# large models chain together or when a single ~30 GB model needs RAM
+# overflow.
+
+hardware:
+  vram_gb: 24.0
+  ram_gb: 128.0
+  cpu_cores: 16
+
+models:
+  # Long GPU-bound training / inference
+  - name: long_inference
+    vram_gb: 20.0
+    residency: GPU_EXCLUSIVE
+
+  # Large co-resident inference stack
+  - name: classifier_large
+    vram_gb: 8.0
+    residency: GPU_SHARED
+
+  - name: embedder_large
+    vram_gb: 4.0
+    residency: GPU_SHARED
+
+  - name: reranker_large
+    vram_gb: 6.0
+    residency: GPU_SHARED
+
+  # CPU-only data plane
+  - name: data_pipeline
+    vram_gb: 0.0
+    residency: CPU_ONLY
+
+  # Extremely large model needing RAM overflow even on 24 GB
+  - name: huge_model
+    vram_gb: 30.0
+    residency: GPU_RAM_OVERFLOW
+    ram_overflow_supported: true
+    ram_gb_needed: 40.0

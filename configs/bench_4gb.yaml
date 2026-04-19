@@ -1,0 +1,49 @@
+# 4 GB VRAM bench — the canonical small-GPU research workstation.
+#
+# Typical hardware: RTX A1000 (4 GB VRAM) or similar entry-class GPU paired with
+# a reasonable workstation CPU + RAM budget. The bench the three patterns were
+# extracted from.
+#
+# This file is a forward-looking design artifact. The v0.2 loader will read it
+# via `Config.from_yaml()`; for now, hand-translate to ModelSpec / HardwareSpec
+# in Python (see `examples/04_composed_day.py`).
+
+hardware:
+  vram_gb: 4.0
+  ram_gb: 32.0
+  cpu_cores: 8
+
+models:
+  # Long GPU-bound job that saturates the card
+  - name: long_inference
+    vram_gb: 3.5
+    residency: GPU_EXCLUSIVE
+
+  # Small GPU-shared models that can co-reside
+  - name: classifier_a
+    vram_gb: 0.7
+    residency: GPU_SHARED
+
+  - name: embedder
+    vram_gb: 0.3
+    residency: GPU_SHARED
+
+  - name: reranker
+    vram_gb: 1.2
+    residency: GPU_SHARED
+
+  # CPU-only post-processing
+  - name: feature_extractor
+    vram_gb: 0.0
+    residency: CPU_ONLY
+
+  - name: report_writer
+    vram_gb: 0.0
+    residency: CPU_ONLY
+
+  # Oversized model that needs RAM overflow
+  - name: big_folder
+    vram_gb: 6.0
+    residency: GPU_RAM_OVERFLOW
+    ram_overflow_supported: true
+    ram_gb_needed: 10.0
