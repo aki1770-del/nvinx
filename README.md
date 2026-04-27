@@ -184,6 +184,20 @@ Every pattern takes `ModelSpec`s and a `HardwareSpec`, returns a `SchedulingPlan
 
 ---
 
+## Algorithmic prior art
+
+`nvinx`'s patterns are not novel algorithms — they are explicit, composable formulations of techniques the GPU multi-tenancy and DL-inference-serving literature has documented at a peer-reviewed level. The contribution of this package is to bring those techniques to the small-VRAM bioinformatics-bench audience, where the algorithms have not yet been packaged for direct use.
+
+- **Pattern B (`fractional_coresidency`)** — algorithmic family established by *iGniter: Interference-Aware GPU Resource Provisioning for Predictable DNN Inference in the Cloud* (Xu et al., IEEE TPDS 2022, [10.1109/TPDS.2022.3232715](https://doi.org/10.1109/TPDS.2022.3232715)) and extended by *ECLIP: Energy-efficient and Practical Co-Location of ML Inference on Spatially Partitioned GPUs* (ISLPED 2025, [10.1109/ISLPED65674.2025.11261793](https://doi.org/10.1109/ISLPED65674.2025.11261793)). Both papers establish bin-packing + interference-aware placement for distinct ML inference models sharing a single GPU's VRAM. `nvinx`'s `fractional_coresidency` is the same algorithmic family applied to small-VRAM bioinformatics workloads (protein language models + classifiers + structure predictors) where the literature is empirically thinner.
+
+- **Pattern A (`serial_handoff`)** — closely related to standard CPU-GPU pipeline overlap patterns documented across genomics-acceleration literature (e.g., GenPIP nanopore pipelining, SquiggleFilter virus detection accelerator). The single-bench framing is what differs; the algorithm itself is the canonical overlap pattern.
+
+- **Pattern C (`ram_overflow`)** — directly invokes HuggingFace `accelerate`'s `device_map="auto"` mechanism. The contribution is the declarative interface; the offload mechanism is the well-documented `accelerate` capability for VRAM-exceeding model loading.
+
+If your work cites `nvinx` for any of these patterns, please cite the underlying algorithmic-family reference as well — `nvinx` is the deployment-layer formulation, not the algorithmic primary source.
+
+---
+
 ## Status and stability
 
 v0.1 is **alpha**. Expect:
