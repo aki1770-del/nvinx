@@ -50,6 +50,7 @@ BENCH = HardwareSpec(vram_gb=4.0, ram_gb=32.0, cpu_cores=8)
 # Window 1 — overnight basecalling (Pattern A: serial_handoff)
 # ──────────────────────────────────────────────────────────────────────────────
 
+
 def window_overnight_basecalling():
     """The basecaller saturates the GPU for 4-8 hours. CPU work runs in parallel."""
     print("\n--- Window 1: overnight basecalling (Pattern A) ---")
@@ -81,6 +82,7 @@ def window_overnight_basecalling():
 # ──────────────────────────────────────────────────────────────────────────────
 # Window 2 — neoantigen ranking ensemble (Pattern B: fractional_coresidency)
 # ──────────────────────────────────────────────────────────────────────────────
+
 
 def window_neoantigen_ensemble():
     """Two small inference models co-reside in VRAM; a CPU lookup runs alongside."""
@@ -118,6 +120,7 @@ def window_neoantigen_ensemble():
 # Window 3 — structure prediction, fits in VRAM (sequential, no nvinx pattern)
 # ──────────────────────────────────────────────────────────────────────────────
 
+
 def window_structure_prediction_in_vram():
     """The standard case: structure prediction for ≤216-residue candidates fits."""
     print("\n--- Window 3: structure prediction, fits in VRAM ---")
@@ -137,6 +140,7 @@ def window_structure_prediction_in_vram():
 # ──────────────────────────────────────────────────────────────────────────────
 # Window 4 — oversized candidate (>216 residues): RAM overflow (Pattern C)
 # ──────────────────────────────────────────────────────────────────────────────
+
 
 def window_structure_prediction_overflow():
     """When a candidate exceeds the residue threshold, the model exceeds VRAM.
@@ -163,10 +167,9 @@ def window_structure_prediction_overflow():
 # Entry point
 # ──────────────────────────────────────────────────────────────────────────────
 
+
 def main() -> None:
-    print(
-        f"Bench: VRAM={BENCH.vram_gb} GB, RAM={BENCH.ram_gb} GB, CPU={BENCH.cpu_cores}c"
-    )
+    print(f"Bench: VRAM={BENCH.vram_gb} GB, RAM={BENCH.ram_gb} GB, CPU={BENCH.cpu_cores}c")
     print("Workload: bioinformatics + neoantigen ranking + structure prediction")
     print("All four windows are scheduled with framework-agnostic primitives;")
     print("the runtime is the user's choice (PyTorch, HuggingFace, etc.).")
