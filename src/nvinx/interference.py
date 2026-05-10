@@ -24,9 +24,8 @@ v0.3+ goal.
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
-from typing import Mapping, Optional
-
+from collections.abc import Mapping
+from dataclasses import dataclass
 
 # ============================================================================
 # Dataclasses (frozen; operator-generated only)
@@ -40,6 +39,7 @@ class HardwareCoefficients:
     Fitted from hardware sweeps (idlef polynomial + powerp linear). Used by
     the queue-aware prediction formula. Operator-generated; not caller-supplied.
     """
+
     idlef_polynomial: tuple[float, ...]
     powerp_linear: tuple[float, ...]
     nominal_freq_mhz: float
@@ -73,15 +73,18 @@ class InterferenceProfile:
     supplied. Queue-aware predictions silently fall back to None-theta if
     profile lacks theta (calibration not yet performed).
     """
+
     name: str
     kernels: int
     baseidle_ms: float
     act_solo_ms: float
     l2_saturation_pct: float  # via real ncu (lts__t_sectors.avg.pct_of_peak_sustained_elapsed)
     k_l2: float = 0.0  # legacy iGniter cache-sensitivity (kept for reference; not load-bearing)
-    theta: Optional[float] = None  # queue-aware (fitted from cross-pair calibration)
+    theta: float | None = None  # queue-aware (fitted from cross-pair calibration)
     power_w: float = 0.0
-    architecture_class: str = "unknown"  # e.g. "encoder_transformer", "decoder_transformer", "encoder_decoder"
+    architecture_class: str = (
+        "unknown"  # e.g. "encoder_transformer", "decoder_transformer", "encoder_decoder"
+    )
 
     @property
     def kernel_rate(self) -> float:
@@ -106,6 +109,7 @@ class PairLookupEntry:
     error (e.g., 2-small-kernel pairs like short+qwen with ~30% LOPO error).
     Per delve §5.1: preserves measured ground truth at cost of generalization.
     """
+
     pair: tuple[str, str]
     measured_latency_a_ms: float
     measured_latency_b_ms: float
@@ -201,7 +205,7 @@ def asymmetry_predictor(
 def lookup_pair_latency(
     pair: tuple[str, str],
     lookup: Mapping[tuple[str, str], PairLookupEntry],
-) -> Optional[tuple[float, float]]:
+) -> tuple[float, float] | None:
     """Try lookup for a known co-located pair.
 
     Returns measured latencies (a_ms, b_ms) if pair is in lookup, else None.
@@ -228,7 +232,7 @@ def predict_pair_latency(
     profile_b: InterferenceProfile,
     hw: HardwareCoefficients,
     *,
-    pair_lookup: Optional[Mapping[tuple[str, str], PairLookupEntry]] = None,
+    pair_lookup: Mapping[tuple[str, str], PairLookupEntry] | None = None,
 ) -> tuple[float, float, str]:
     """Tiered pair latency prediction: lookup first, then queue-aware.
 

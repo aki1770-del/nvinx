@@ -14,7 +14,7 @@ C        A single model exceeds the VRAM budget     Offload layers to system RAM
 
 from __future__ import annotations
 
-from typing import Mapping, Optional
+from collections.abc import Mapping
 
 from nvinx.catalog import HardwareSpec, ModelSpec, Residency, SchedulingPlan
 from nvinx.interference import (
@@ -171,10 +171,10 @@ def fractional_coresidency_v2(
     hw: HardwareSpec,
     *,
     headroom_gb: float = _DEFAULT_HEADROOM_GB,
-    interference_profiles: Optional[Mapping[str, InterferenceProfile]] = None,
-    hw_coefs: Optional[HardwareCoefficients] = None,
-    pair_lookup: Optional[Mapping[tuple[str, str], PairLookupEntry]] = None,
-    max_kernel_rate_threshold: Optional[float] = None,
+    interference_profiles: Mapping[str, InterferenceProfile] | None = None,
+    hw_coefs: HardwareCoefficients | None = None,
+    pair_lookup: Mapping[tuple[str, str], PairLookupEntry] | None = None,
+    max_kernel_rate_threshold: float | None = None,
 ) -> SchedulingPlan:
     """Pattern B v0.2/v0.3 — queue-aware interference-modeled co-residency.
 

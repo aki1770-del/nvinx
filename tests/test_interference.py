@@ -124,7 +124,11 @@ def test_queue_aware_predict_long_qwen_pair():
 
 def test_queue_aware_requires_theta():
     p = InterferenceProfile(
-        name="x", kernels=100, baseidle_ms=0.0, act_solo_ms=10.0, l2_saturation_pct=10.0,
+        name="x",
+        kernels=100,
+        baseidle_ms=0.0,
+        act_solo_ms=10.0,
+        l2_saturation_pct=10.0,
         theta=None,  # missing
     )
     with pytest.raises(ValueError, match="theta"):
@@ -133,7 +137,11 @@ def test_queue_aware_requires_theta():
 
 def test_queue_aware_zero_act_solo_safety():
     p = InterferenceProfile(
-        name="x", kernels=0, baseidle_ms=0.0, act_solo_ms=0.0, l2_saturation_pct=0.0,
+        name="x",
+        kernels=0,
+        baseidle_ms=0.0,
+        act_solo_ms=0.0,
+        l2_saturation_pct=0.0,
         theta=1.0,
     )
     a, b = predict_pair_latency_queue_aware(p, p, HW_COEFS)
@@ -222,7 +230,11 @@ def test_predict_pair_latency_falls_back_to_queue_aware():
 
 def test_predict_pair_latency_fallback_unknown_when_no_theta_no_lookup():
     p_no_theta = InterferenceProfile(
-        name="x", kernels=100, baseidle_ms=0, act_solo_ms=10.0, l2_saturation_pct=10.0,
+        name="x",
+        kernels=100,
+        baseidle_ms=0,
+        act_solo_ms=10.0,
+        l2_saturation_pct=10.0,
         theta=None,
     )
     a, b, source = predict_pair_latency(p_no_theta, PROF_LONG, HW_COEFS, pair_lookup=None)
@@ -276,7 +288,8 @@ def test_v2_with_threshold_emits_warning():
     candidates = [SHORT_SPEC, QWEN_SPEC]
     profiles = {"esm2_short": PROF_SHORT, "qwen_05b": PROF_QWEN}
     plan = fractional_coresidency_v2(
-        candidates, HW_4GB,
+        candidates,
+        HW_4GB,
         interference_profiles=profiles,
         hw_coefs=HW_COEFS,
         max_kernel_rate_threshold=10.0,  # very low; will be exceeded
@@ -289,13 +302,16 @@ def test_v2_with_lookup_uses_lookup_source():
     candidates = [SHORT_SPEC, QWEN_SPEC]
     profiles = {"esm2_short": PROF_SHORT, "qwen_05b": PROF_QWEN}
     canonical = tuple(sorted(["esm2_short", "qwen_05b"]))
-    lookup = {canonical: PairLookupEntry(
-        pair=canonical,
-        measured_latency_a_ms=76.5,
-        measured_latency_b_ms=77.9,
-    )}
+    lookup = {
+        canonical: PairLookupEntry(
+            pair=canonical,
+            measured_latency_a_ms=76.5,
+            measured_latency_b_ms=77.9,
+        )
+    }
     plan = fractional_coresidency_v2(
-        candidates, HW_4GB,
+        candidates,
+        HW_4GB,
         interference_profiles=profiles,
         hw_coefs=HW_COEFS,
         pair_lookup=lookup,
