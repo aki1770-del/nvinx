@@ -14,7 +14,17 @@ C        A single model exceeds the VRAM budget     Offload layers to system RAM
 
 from __future__ import annotations
 
+from typing import Mapping, Optional
+
 from nvinx.catalog import HardwareSpec, ModelSpec, Residency, SchedulingPlan
+from nvinx.interference import (
+    HardwareCoefficients,
+    InterferenceProfile,
+    PairLookupEntry,
+    asymmetry_predictor,
+    max_kernel_rate_score,
+    predict_pair_latency,
+)
 
 _DEFAULT_HEADROOM_GB = 0.5
 
@@ -153,6 +163,120 @@ def fractional_coresidency(
             f"co-resident; {used_vram:.2f}/{budget:.2f} GB VRAM used "
             f"(+ {headroom_gb} GB headroom)."
         ],
+    )
+
+
+def fractional_coresidency_v2(
+    candidates: list[ModelSpec],
+    hw: HardwareSpec,
+    *,
+    headroom_gb: float = _DEFAULT_HEADROOM_GB,
+    interference_profiles: Optional[Mapping[str, InterferenceProfile]] = None,
+    hw_coefs: Optional[HardwareCoefficients] = None,
+    pair_lookup: Optional[Mapping[tuple[str, str], PairLookupEntry]] = None,
+    max_kernel_rate_threshold: Optional[float] = None,
+) -> SchedulingPlan:
+    """Pattern B v0.2/v0.3 — queue-aware interference-modeled co-residency.
+
+    Backward-compatible enhancement of v0.1 ``fractional_coresidency``. Calls
+    the v0.1 greedy bin-packer for the placement decision, then augments the
+    plan's ``notes`` with interference predictions if interference_profiles
+    are provided.
+
+    The placement DECISION itself is unchanged from v0.1 (greedy bin-pack by
+    descending VRAM). The v0.2/v0.3 additions are diagnostic + advisory:
+
+      - max_kernel_rate pre-filter (heuristic; ρ=0.50 with slowdown)
+      - per-pair latency prediction (queue-aware formula or lookup)
+      - asymmetry predictor (act_solo_ratio; ρ=0.72)
+
+    Interference profiles are operator-generated; the package ships no
+    published reference profile data. See ``docs/calibrating-your-substrate.md``
+    for the operator workflow. Calibration tooling itself is research-shape
+    and lives in a separate workspace (private); a turnkey
+    ``nvinx.calibration`` module is a v0.3+ goal.
+
+    Parameters
+    ----------
+    candidates, hw, headroom_gb
+        Same as v0.1 ``fractional_coresidency``.
+    interference_profiles
+        Mapping from model name to InterferenceProfile. If None, this function
+        is equivalent to v0.1 ``fractional_coresidency`` (no augmentation).
+    hw_coefs
+        Substrate-level coefficients (idlef + powerp). Required for
+        queue-aware prediction; if None, profiles must rely on lookup-only.
+    pair_lookup
+        Per-pair measured ground truth (safety net for known high-error
+        pairs like 2-small-kernel cases per v0.3 D2 outlier finding).
+    max_kernel_rate_threshold
+        If set, emit a warning note when max kernel rate of placed models
+        exceeds this value (high queue-contention risk).
+
+    Returns
+    -------
+    SchedulingPlan
+        Same placement as v0.1; ``notes`` augmented with interference info.
+    """
+    base_plan = fractional_coresidency(candidates, hw, headroom_gb=headroom_gb)
+
+    if interference_profiles is None:
+        return base_plan
+
+    placed = base_plan.gpu_coresident
+    placed_with_profiles = [m for m in placed if m.name in interference_profiles]
+    notes = list(base_plan.notes)
+
+    # Heuristic pre-filter: max kernel rate
+    if placed_with_profiles:
+        profiles = [interference_profiles[m.name] for m in placed_with_profiles]
+        mkr = max_kernel_rate_score(profiles)
+        notes.append(
+            f"interference: max_kernel_rate={mkr:.1f} k/ms "
+            f"({len(profiles)}/{len(placed)} placed models have profiles)"
+        )
+        if max_kernel_rate_threshold is not None and mkr > max_kernel_rate_threshold:
+            notes.append(
+                f"interference: WARNING max_kernel_rate {mkr:.1f} > "
+                f"threshold {max_kernel_rate_threshold:.1f}; expect queue contention"
+            )
+
+    # Per-pair prediction for diagnostics (only if hw_coefs OR pair_lookup available)
+    if (hw_coefs is not None or pair_lookup is not None) and len(placed_with_profiles) >= 2:
+        for i in range(len(placed_with_profiles)):
+            for j in range(i + 1, len(placed_with_profiles)):
+                a = placed_with_profiles[i]
+                b = placed_with_profiles[j]
+                pa = interference_profiles[a.name]
+                pb = interference_profiles[b.name]
+                # Use a sentinel HardwareCoefficients if hw_coefs is None
+                # (queue-aware path will fail gracefully via fallback_unknown)
+                if hw_coefs is not None:
+                    lat_a, lat_b, source = predict_pair_latency(
+                        pa, pb, hw_coefs, pair_lookup=pair_lookup
+                    )
+                    asym = asymmetry_predictor(pa, pb)
+                    notes.append(
+                        f"interference: pair({a.name}+{b.name}) "
+                        f"pred_lat=({lat_a:.1f}, {lat_b:.1f})ms via {source}; "
+                        f"asymmetry={asym:.2f}"
+                    )
+                elif pair_lookup is not None:
+                    # Lookup-only path
+                    canonical = tuple(sorted([a.name, b.name]))
+                    entry = pair_lookup.get(canonical)
+                    if entry is not None:
+                        notes.append(
+                            f"interference: pair({a.name}+{b.name}) "
+                            f"meas_lat=({entry.measured_latency_a_ms:.1f}, "
+                            f"{entry.measured_latency_b_ms:.1f})ms via lookup"
+                        )
+
+    return SchedulingPlan(
+        gpu_coresident=base_plan.gpu_coresident,
+        cpu_parallel=base_plan.cpu_parallel,
+        unscheduled=base_plan.unscheduled,
+        notes=notes,
     )
 
 

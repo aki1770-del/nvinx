@@ -11,7 +11,7 @@ When a single model saturates a small GPU for hours, the CPU, system RAM, and th
 
 *Extracted from a real single-GPU research workload (4 GB VRAM + 32 GB RAM + 8 cores). The patterns are generic; the workload is not published.*
 
-**Status:** v0.1 alpha. API may still change between minor versions; pin your dependency.
+**Status:** v0.2.0a1 in-tree (v0.1.0 on PyPI). API may still change between minor versions; pin your dependency.
 
 ---
 
@@ -162,6 +162,87 @@ The three patterns compose: a realistic day on a 4 GB bench runs Pattern A durin
 
 ---
 
+## v0.2 (in-tree): interference prediction for Pattern B
+
+Pattern B v0.1 packs models that fit. v0.2 adds **interference prediction primitives** for operators who want to know whether a packed placement will hit SLO *before* they run it.
+
+**The pain v0.2 addresses.** Pattern B v0.1 says yes/no on packing — but doesn't tell you whether the packed models will interfere. Two small models that fit in VRAM may still slow each other down 3-5× under co-residency due to GPU kernel-queue contention. The operator wants:
+
+- *"If I pack model A and model B, what latency should I expect?"*
+- *"Is this placement near the SLO bound?"*
+- *"Which model will suffer more if they co-reside?"*
+
+**v0.2 solution (substrate-native).** A new module `nvinx.interference` provides:
+
+- `InterferenceProfile` — per-model coefficients (operator-profiled on *your* substrate)
+- `HardwareCoefficients` — substrate-level coefficients (one-time per bench)
+- `predict_pair_latency_queue_aware()` — queue-aware formula: `latency_i = act_solo_i × (1 + θ_i × partner_act / (act_solo_i + partner_act)) + scheduling_delay`
+- `max_kernel_rate_score()` — pre-filter heuristic (Spearman ρ ≈ 0.50 with measured slowdown on the validation bench)
+- `asymmetry_predictor()` — `act_solo_ratio` for which-suffers-more (ρ ≈ 0.72)
+- `predict_pair_latency()` — tiered: lookup → queue-aware → fallback
+- `PairLookupEntry` — per-pair measured ground truth (safety net for known high-error pairs)
+
+`fractional_coresidency_v2()` accepts these as optional inputs and augments the plan's `notes` with predictions. If you don't supply profiles, it's equivalent to v0.1 `fractional_coresidency` (no behaviour change).
+
+**Honest scope.** The queue-aware formula was validated on **one substrate**: a 4 GB RTX A1000 mobile bench (Ampere sm_86) with a heterogeneous transformer/LLM workload mix (ESM-2-150M at 3 sequence lengths + Qwen-0.5B + Whisper-base). On that substrate's 4-model 6-pair corpus, the formula achieves ~16% LOPO mean error; on the 5-model 10-pair extended corpus, ~25% LOPO mean. Persistent ~30% LOPO outlier on 2-small-kernel pairs (formula limit; lookup safety net handles those).
+
+**Substrate-bound.** If your bench differs (different GPU, different model class, different driver), the published coefficients are not portable — you must recalibrate. See [`docs/calibrating-your-substrate.md`](docs/calibrating-your-substrate.md) for the operator workflow.
+
+**Code example.**
+
+```python
+from nvinx.catalog import HardwareSpec, ModelSpec, Residency
+from nvinx.interference import HardwareCoefficients, InterferenceProfile
+from nvinx.patterns import fractional_coresidency_v2
+
+hw = HardwareSpec(vram_gb=4.0, ram_gb=32.0, cpu_cores=20)
+
+# Substrate-level coefficients (you fit these once via the calibration workflow)
+hw_coefs = HardwareCoefficients(
+    idlef_polynomial=(6.42, -7.0),
+    powerp_linear=(0.0,),
+    nominal_freq_mhz=1530.0,
+    tdp_watts=40.0,
+    substrate_name="rtx_a1000_4gb",
+)
+
+# Per-model coefficients (you profile these for each model on your substrate)
+profile_a = InterferenceProfile(
+    name="model_a",
+    kernels=1027, baseidle_ms=0.077, act_solo_ms=21.7,
+    l2_saturation_pct=16.8, theta=3.91,
+    architecture_class="encoder_transformer",
+)
+profile_b = InterferenceProfile(
+    name="model_b",
+    kernels=1026, baseidle_ms=0.149, act_solo_ms=114.9,
+    l2_saturation_pct=37.1, theta=1.20,
+    architecture_class="encoder_transformer",
+)
+
+candidates = [
+    ModelSpec(name="model_a", vram_gb=0.6, residency=Residency.GPU_SHARED),
+    ModelSpec(name="model_b", vram_gb=0.6, residency=Residency.GPU_SHARED),
+]
+
+plan = fractional_coresidency_v2(
+    candidates, hw,
+    interference_profiles={"model_a": profile_a, "model_b": profile_b},
+    hw_coefs=hw_coefs,
+    max_kernel_rate_threshold=50.0,
+)
+
+for note in plan.notes:
+    print(note)
+# Pattern B (fractional_coresidency): 2 model(s) co-resident; 1.20/3.50 GB VRAM used (+ 0.5 GB headroom).
+# interference: max_kernel_rate=47.3 k/ms (2/2 placed models have profiles)
+# interference: pair(model_a+model_b) pred_lat=(86.5, 141.7)ms via queue_aware; asymmetry=5.30
+```
+
+The placement *decision* is unchanged from v0.1 (greedy bin-pack). The v0.2 additions are diagnostic + advisory — they help you decide whether to accept the placement.
+
+---
+
 ## Data model
 
 Four types live in `src/nvinx/catalog.py`:
@@ -200,11 +281,12 @@ If your work cites `nvinx` for any of these patterns, please cite the underlying
 
 ## Status and stability
 
-v0.1 is **alpha**. Expect:
+v0.2.0a1 is **alpha** in-tree (v0.1.0 is the most recent PyPI release). Expect:
 
-- Additions: configs/YAML-driven spec loading (v0.2), a `scheduler` layer that composes patterns across a day's workload (v0.2+), more patterns as edge cases surface.
-- Breaking changes: `SchedulingPlan` shape may add fields. Pin your version.
-- No breaking changes to the three core pattern signatures — those are stable for v0.1.
+- Additions in v0.2.0a1: substrate-native interference primitives (`nvinx.interference`), `fractional_coresidency_v2`, expanded test suite (29 passing).
+- Backward compat: v0.1.0 API surface is unchanged. `fractional_coresidency` (no profiles) returns the same plan as before; `fractional_coresidency_v2` falls back to v0.1 behaviour when `interference_profiles=None`.
+- Future: configs/YAML-driven spec loading, a `scheduler` layer that composes patterns across a day's workload, more patterns as edge cases surface.
+- Pin your version. `SchedulingPlan` may add fields in minor releases.
 
 ---
 
@@ -235,12 +317,12 @@ Star the repo if you find the reframe useful — it's the signal that tells us t
 ```bash
 pip install -e ".[dev]"
 
-pytest              # 8 smoke tests
+pytest              # 29 tests (8 v0.1 patterns + 21 v0.2 interference)
 ruff format --check .
 ruff check .
 ```
 
-Eight smoke tests covering the three patterns' happy paths, error paths, and boundary cases. Tests live in `tests/test_patterns.py`. CI runs on every push and PR across Python 3.10–3.12.
+29 tests in two files: `tests/test_patterns.py` (8; v0.1 patterns) and `tests/test_interference.py` (21; v0.2 interference primitives). CI runs on every push and PR across Python 3.10–3.12.
 
 ---
 
