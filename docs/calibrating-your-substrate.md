@@ -70,6 +70,86 @@ A minimum-viable fit needs **3 distinct models** (so you have C(3,2) = 3 pairs =
    - Add more models and re-fit (more data → more stable thetas)
    - Build a per-pair lookup table (`PairLookupEntry`) for the high-error pairs as a safety net
    - Accept the formula as advisory only; rely on lookup primarily
+   - Proceed to step 6 (V5 γ fit) if your LOPO outliers cluster on kernel-size-asymmetric pairs
+
+6. **Optional: fit V5 `gamma_kernel_size` (v0.6 alpha; substrate-bound).** See the next section.
+
+---
+
+## Step 6: Fit `gamma_kernel_size` (optional v0.6 alpha)
+
+The v0.2 queue-aware formula treats each side of a co-resident pair symmetrically in the partner-time-fraction term. On substrates where the dominant interference mechanism is the GPU scheduler queue rather than L2 cache pressure, an iterative calibration journey on a 4 GB RTX A1000 mobile substrate found that a single additional empirical term reduces LOPO mean by ~5 pp on transformer/LLM workload mixes. The reference value `γ ≈ 0.75` cited in this guide and in the `predict_pair_latency_queue_aware_v5` docstring was fitted on an **extended 7-model 19-pair corpus** (the 4-model corpus from the v0.2 baseline plus three additional decoder/encoder models that surfaced the kernel-size-asymmetry pattern); an earlier 6-model 15-pair fit on the same substrate yielded a smaller γ (≈ 0.44), and a 4-model 6-pair fit yielded γ → 0 (the asymmetry signal does not appear with too few or too uniform models in the corpus). LOPO mean improvement on the 7-model corpus: 23.3% baseline → 18.4% with V5. The formula:
+
+```
+partner_frac      = act_partner / (act_self + act_partner)
+kernel_size_ratio = (act_partner / kernels_partner) / (act_self / kernels_self)
+latency_self      = act_self × (1 + theta_self × partner_frac
+                                  × (1 + gamma × kernel_size_ratio))
+                  + scheduling_delay
+```
+
+What `kernel_size_ratio` captures: when a small-kernel-self model is paired with a large-kernel partner, every small-self kernel may queue behind a long-running large-partner kernel. The asymmetric blocking is not captured by `partner_frac` alone — it depends on the *duration ratio* of each side's individual kernels. The correction is a single scalar `gamma_kernel_size` empirical per substrate.
+
+### When V5 helps
+
+- Heterogeneous kernel-size mix in your corpus (e.g., a decoder LLM with many small kernels co-located with an encoder model with fewer larger kernels).
+- Small-SM substrates where queue contention dominates (the reference bench has 16 SMs; the SM pool saturates quickly).
+- Your v0.2 LOPO outliers cluster on pairs with high `kernel_size_ratio` (you can check via the `kernel_duration_ms` property on each profile).
+
+### When V5 may NOT help (or may hurt)
+
+- Datacenter-class GPUs with many SMs (V100/A100/H100 — 80+ SMs) where the SM pool absorbs multiple co-located workloads and L2 cache contention is the dominant interference physics. The published `iGniter` evaluation on V100 + CNN saw max ~1.35× slowdown at 5 co-located workloads (cache-contention-dominated); the reference bench saw max ~12.11× slowdown at 2 workloads (queue-contention-dominated). The ~30× magnitude gap is the empirical signature of fundamentally different interference physics — V5's γ ≈ 0.75 reference fit will be wrong by an unknown sign on the iGniter substrate class.
+- Same-architecture corpora (V5 collapses to v0.2 behaviour when all pairs have `kernel_size_ratio ≈ 1`).
+- Workloads where measurement noise on `k_l2` is the dominant source of LOPO error (per the v0.5 H3 finding, multi-trial averaging was rejected as null-result on the reference substrate, but a different substrate may have different noise characteristics).
+
+**Use v0.2 if** you have not collected calibration data on your substrate; the published V5 γ value will not transfer.
+
+### How to fit
+
+```python
+from nvinx import (
+    HardwareCoefficients,
+    InterferenceProfile,
+    fit_gamma_kernel_size,
+)
+
+# Step 1-5 already produced these (theta fitted on each profile):
+hw_coefs: HardwareCoefficients = ...
+profiles: dict[str, InterferenceProfile] = ...
+
+# Cross-pair co-located measurements (one row per pair):
+pair_measurements = [
+    ("esm2_long",  "qwen_05b",     115.2,  18.4),
+    ("esm2_short", "qwen_05b",      28.7,  17.1),
+    ("esm2_long",  "whisper_base", 119.8,  62.3),
+    # ... ideally ≥ 6 pairs spanning a range of kernel_size_ratio values
+]
+
+gamma = fit_gamma_kernel_size(profiles, pair_measurements, hw_coefs)
+# Now `gamma` is your substrate-specific V5 coefficient.
+```
+
+### How to use
+
+```python
+from nvinx import fractional_coresidency_v2
+
+plan = fractional_coresidency_v2(
+    candidates,
+    hw,
+    interference_profiles=profiles,
+    hw_coefs=hw_coefs,
+    gamma_kernel_size=gamma,  # opt into V5 routing
+)
+```
+
+`fractional_coresidency_v2` with `gamma_kernel_size=None` (the default) reproduces v0.2 queue-aware behaviour exactly. Existing v0.2 callers are unaffected.
+
+### Validate the V5 fit
+
+Re-run leave-one-pair-out CV using `predict_pair_latency_queue_aware_v5` and compare against your v0.2 LOPO. If V5 LOPO is lower on your corpus, ship γ alongside the profiles. If V5 LOPO is comparable or worse, stay on v0.2 — the kernel-size-ratio mechanism is not the dominant source of error on your substrate.
+
+A single-parameter fit on too few pairs overfits; aim for ≥ 6 pairs spanning a range of `kernel_size_ratio` (mix small-kernel and large-kernel models in your corpus).
 
 ---
 

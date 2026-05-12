@@ -175,6 +175,7 @@ def fractional_coresidency_v2(
     hw_coefs: HardwareCoefficients | None = None,
     pair_lookup: Mapping[tuple[str, str], PairLookupEntry] | None = None,
     max_kernel_rate_threshold: float | None = None,
+    gamma_kernel_size: float | None = None,
 ) -> SchedulingPlan:
     """Pattern B v0.2/v0.3 — queue-aware interference-modeled co-residency.
 
@@ -212,6 +213,12 @@ def fractional_coresidency_v2(
     max_kernel_rate_threshold
         If set, emit a warning note when max kernel rate of placed models
         exceeds this value (high queue-contention risk).
+    gamma_kernel_size
+        Optional V5 kernel-size-ratio coefficient (v0.6 alpha; substrate-
+        bound). When supplied, per-pair predictions route through the V5
+        formula via :func:`~nvinx.interference.predict_pair_latency_queue_aware_v5`;
+        when ``None`` (default), v0.2 queue-aware behaviour is preserved.
+        Operator-fit via :func:`~nvinx.interference.fit_gamma_kernel_size`.
 
     Returns
     -------
@@ -253,7 +260,11 @@ def fractional_coresidency_v2(
                 # (queue-aware path will fail gracefully via fallback_unknown)
                 if hw_coefs is not None:
                     lat_a, lat_b, source = predict_pair_latency(
-                        pa, pb, hw_coefs, pair_lookup=pair_lookup
+                        pa,
+                        pb,
+                        hw_coefs,
+                        pair_lookup=pair_lookup,
+                        gamma_kernel_size=gamma_kernel_size,
                     )
                     asym = asymmetry_predictor(pa, pb)
                     notes.append(

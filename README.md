@@ -243,6 +243,70 @@ The placement *decision* is unchanged from v0.1 (greedy bin-pack). The v0.2 addi
 
 ---
 
+## v0.3 (in-tree, alpha): substrate-bound V5 kernel-size-ratio correction
+
+v0.3 adds **one optional empirical term** to the v0.2 queue-aware formula. On substrates where the dominant interference mechanism is the GPU scheduler queue rather than L2 cache pressure, the term captures the asymmetric blocking of small-kernel models by large-kernel partners — and reduces LOPO mean error by ~5 pp on transformer/LLM workload mixes on a 4 GB mobile substrate.
+
+**The pain v0.3 addresses.** v0.2's queue-aware formula treats both sides of a co-resident pair symmetrically in the partner-time-fraction term. On heterogeneous-kernel-size corpora (e.g. a decoder LLM with many small kernels co-located with an encoder model with fewer larger kernels), the symmetric form under-predicts the slowdown on the small-kernel side: every small-self kernel may queue behind a long-running large-partner kernel. The asymmetric blocking is not captured by `partner_frac` alone — it depends on the *kernel-duration ratio* of each side.
+
+**v0.3 solution (V5; substrate-bound).** A new function `nvinx.interference.predict_pair_latency_queue_aware_v5` extends v0.2 with one additional scalar `gamma_kernel_size`:
+
+```
+partner_frac      = act_partner / (act_self + act_partner)
+kernel_size_ratio = (act_partner / kernels_partner) / (act_self / kernels_self)
+latency_self      = act_self × (1 + theta_self × partner_frac
+                                  × (1 + gamma × kernel_size_ratio))
+                  + scheduling_delay + baseidle_self
+```
+
+A companion function `nvinx.interference.fit_gamma_kernel_size(profiles, pair_measurements, hw)` solves the closed-form relative-residual weighted least-squares fit (no `numpy` / `scipy` dependency added; pure stdlib). The dispatcher `predict_pair_latency` and `fractional_coresidency_v2` both accept an optional `gamma_kernel_size` kwarg and route to V5 when supplied.
+
+**Backward compatibility (the load-bearing discipline).** When `gamma_kernel_size` is `None` (the default) or `0.0`, the V5 function is **bit-identical** to v0.2's `predict_pair_latency_queue_aware`. Existing v0.2 callers see no behaviour change. The `predict_pair_latency` dispatcher's source label remains `"queue_aware"` when no γ is supplied; it returns `"queue_aware_v5"` only when γ is opted in.
+
+**Honest scope (when V5 helps vs hurts).**
+
+- *V5 helps* on heterogeneous-kernel-size corpora on small-SM substrates where queue contention dominates (the reference bench has 16 SMs).
+- *V5 may not help — or may hurt* on datacenter-class GPUs with many SMs (Volta / Ampere / Hopper datacenter; 80+ SMs) where the SM pool absorbs multiple co-located workloads and L2 cache contention is the dominant interference physics. The published `iGniter` evaluation on a Volta-class datacenter GPU + CNN saw max ~1.35× slowdown at 5 co-located workloads; the reference bench saw max ~12.11× slowdown at 2 workloads. The ~30× magnitude gap is the empirical signature of fundamentally different interference physics — V5's reference γ ≈ 0.75 will be wrong by an unknown sign on that substrate class.
+- *V5 collapses to v0.2* on same-architecture corpora where `kernel_size_ratio ≈ 1`.
+
+**Substrate-bound — the reference γ does NOT transfer.** The reference value `γ ≈ 0.75` cited in the docstrings was fitted on an extended 7-model 19-pair corpus on a 4 GB RTX A1000 mobile substrate with a transformer/LLM workload mix. Earlier iterations of the same calibration journey: a 6-model 15-pair fit yielded γ ≈ 0.44, and a 4-model 6-pair fit yielded γ → 0 (the asymmetry signal does not appear with too few or too uniform models in the corpus). **Operators on other substrates MUST refit** via `fit_gamma_kernel_size` on their own calibration data; see [`docs/calibrating-your-substrate.md`](docs/calibrating-your-substrate.md) Step 6 for the workflow.
+
+**Code example.**
+
+```python
+from nvinx import (
+    HardwareCoefficients,
+    InterferenceProfile,
+    fit_gamma_kernel_size,
+    fractional_coresidency_v2,
+)
+
+# Steps 1-5 of docs/calibrating-your-substrate.md produced these:
+hw_coefs: HardwareCoefficients = ...
+profiles: dict[str, InterferenceProfile] = ...  # theta fitted per model
+
+# Cross-pair co-located measurements (≥ 6 pairs spanning a range of kernel_size_ratio):
+pair_measurements = [
+    ("model_a", "model_b",  115.2,  18.4),
+    ("model_a", "model_c",   28.7,  17.1),
+    # ... more pairs
+]
+
+gamma = fit_gamma_kernel_size(profiles, pair_measurements, hw_coefs)
+
+plan = fractional_coresidency_v2(
+    candidates,
+    hw,
+    interference_profiles=profiles,
+    hw_coefs=hw_coefs,
+    gamma_kernel_size=gamma,  # opt into V5; omit for v0.2 behaviour
+)
+```
+
+On the reference bench's 7-model 19-pair corpus, V5 with operator-fitted γ reduces leave-one-pair-out (LOPO) cross-validation mean from 23.3% (v0.2 baseline) to 18.4%. Re-run LOPO on your corpus to decide whether to ship γ alongside your profiles.
+
+---
+
 ## Data model
 
 Four types live in `src/nvinx/catalog.py`:
@@ -281,11 +345,12 @@ If your work cites `nvinx` for any of these patterns, please cite the underlying
 
 ## Status and stability
 
-v0.2.0a1 is **alpha** in-tree (v0.1.0 is the most recent PyPI release). Expect:
+v0.3.0a1 is **alpha** in-tree. v0.2.0a1 is the most recent PyPI release; v0.1.0 was the prior stable. Expect:
 
-- Additions in v0.2.0a1: substrate-native interference primitives (`nvinx.interference`), `fractional_coresidency_v2`, expanded test suite (29 passing).
-- Backward compat: v0.1.0 API surface is unchanged. `fractional_coresidency` (no profiles) returns the same plan as before; `fractional_coresidency_v2` falls back to v0.1 behaviour when `interference_profiles=None`.
-- Future: configs/YAML-driven spec loading, a `scheduler` layer that composes patterns across a day's workload, more patterns as edge cases surface.
+- Additions in v0.3.0a1: substrate-bound V5 kernel-size-ratio correction (`predict_pair_latency_queue_aware_v5` + `fit_gamma_kernel_size` companion); `predict_pair_latency` dispatcher and `fractional_coresidency_v2` both accept an optional `gamma_kernel_size` kwarg; calibration docs Step 6 extended with V5 fitting workflow; expanded test suite (42 passing).
+- Additions in v0.2.0a1: substrate-native interference primitives (`nvinx.interference`), `fractional_coresidency_v2`, queue-aware prediction baseline.
+- Backward compat: v0.2 and v0.1 API surfaces are unchanged. `fractional_coresidency_v2` with `gamma_kernel_size=None` (the default) reproduces v0.2 behaviour exactly; with `interference_profiles=None` it reproduces v0.1 behaviour exactly. V5 is opt-in via an operator-fitted γ on the operator's own substrate.
+- Future: turnkey `nvinx.calibration` module (lift the operator-side calibration tooling into the public package); cross-substrate γ validation on at least one non-mobile substrate class; more patterns as edge cases surface.
 - Pin your version. `SchedulingPlan` may add fields in minor releases.
 
 ---
@@ -317,12 +382,12 @@ Star the repo if you find the reframe useful — it's the signal that tells us t
 ```bash
 pip install -e ".[dev]"
 
-pytest              # 29 tests (8 v0.1 patterns + 21 v0.2 interference)
+pytest              # 42 tests (8 v0.1 patterns + 34 v0.2 / v0.3 interference)
 ruff format --check .
 ruff check .
 ```
 
-29 tests in two files: `tests/test_patterns.py` (8; v0.1 patterns) and `tests/test_interference.py` (21; v0.2 interference primitives). CI runs on every push and PR across Python 3.10–3.12.
+42 tests in two files: `tests/test_patterns.py` (8; v0.1 patterns) and `tests/test_interference.py` (34; v0.2 queue-aware + v0.3 V5 + fit_gamma + dispatcher routing + backward-compat). CI runs on every push and PR across Python 3.10–3.12.
 
 ---
 
