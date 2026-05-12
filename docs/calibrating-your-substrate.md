@@ -4,7 +4,7 @@ This guide walks an operator through generating `HardwareCoefficients` and per-m
 
 **Why this matters.** The queue-aware formula in `nvinx.interference` is *empirical*. Its coefficients were fitted on one specific bench (4 GB RTX A1000 mobile + heterogeneous transformer/LLM workload). If you use those published coefficients on a different GPU, model class, or driver, the predictions will be wrong. This is not a defect of the formula — it is the substrate-binding nature of empirical interference modeling. Recalibrate for your bench.
 
-**This guide covers** what to measure, in what order, and which tools to use. It does not provide a turnkey calibration script — the calibration tooling currently lives separately as a research artifact (see "Reference implementation" below). v0.2 is alpha; turnkey is a v0.3+ goal.
+**This guide covers** what to measure, in what order, and which tools to use. v0.3.0a1+ ships a turnkey CLI and library API in the `nvinx.calibration` submodule that automates the entire workflow — see the "Turnkey calibration" section below. The per-step guide remains for operators who want fine-grained control.
 
 ---
 
@@ -153,25 +153,98 @@ A single-parameter fit on too few pairs overfits; aim for ≥ 6 pairs spanning a
 
 ---
 
-## Reference implementation
+## Turnkey calibration via `nvinx.calibration` (v0.3.0a1+)
 
-The calibration tooling that produced the reference results lives in a separate research workspace (private) and is research-shape — not part of the public `nvinx` package. Its layout, for orientation when you build your own:
+The `nvinx.calibration` submodule provides a library API + CLI that automates the per-step workflow above. Install the optional extras:
 
-```
-research/v0_2_calibration/
-  ├── coefficients.py            # dataclass definitions (compatible with nvinx.interference)
-  ├── igniter_predict.py         # legacy iGniter formula (kept for comparison)
-  ├── ncu_l2_profiler.py         # ncu wrapper for L2 saturation measurement
-  ├── profile_hardware.py        # idlef + powerp sweeps
-  ├── profile_model.py           # per-model coefficient fitting
-  ├── queue_aware_model.py       # theta fitting via least_squares + LOPO CV
-  ├── validate_pair.py           # concurrent stream pair latency measurement
-  └── run_calibration.py         # end-to-end orchestrator
+```bash
+pip install 'nvinx[calibration]'   # pulls scipy + numpy + nvidia-ml-py
 ```
 
-Operators who want to calibrate their own bench should write their own calibration scripts following this shape. The `nvinx.interference` dataclass field tables in this guide tell you what each script needs to produce.
+You'll still need `ncu` (Nsight Compute) installed system-wide and either run via `sudo` or set `NVreg_RestrictProfilingToAdminUsers=0`. The extras do not pull in `torch` — install a build matching your CUDA via https://pytorch.org/get-started/locally/.
 
-A v0.3+ goal is to lift a stable subset of that tooling into `nvinx.calibration` as a turnkey operator-facing module. Until then, calibration is operator-driven.
+### Library API
+
+```python
+from pathlib import Path
+from nvinx import HardwareCoefficients
+from nvinx.calibration import (
+    run_calibration,
+    ProfileTarget,
+    CalibrationResult,
+)
+
+def load_esm2():
+    import torch
+    from transformers import AutoTokenizer, AutoModel
+    tok = AutoTokenizer.from_pretrained("facebook/esm2_t30_150M_UR50D")
+    model = AutoModel.from_pretrained("facebook/esm2_t30_150M_UR50D").to("cuda")
+    sample = tok("M" * 50, return_tensors="pt").to("cuda")
+    inference_fn = lambda x: model(**x)
+    loader_code = '''
+import torch
+from transformers import AutoTokenizer, AutoModel
+tok = AutoTokenizer.from_pretrained("facebook/esm2_t30_150M_UR50D")
+model = AutoModel.from_pretrained("facebook/esm2_t30_150M_UR50D").to("cuda")
+sample_input = tok("M" * 50, return_tensors="pt").to("cuda")
+inference_fn = lambda x: model(**x)
+'''
+    return ProfileTarget(
+        name="esm2_150M_short_50aa",
+        inference_fn=inference_fn,
+        sample_input=sample,
+        loader_code=loader_code,
+    )
+
+# (Define load_mhcflurry, load_qwen, ... similarly — ≥ 3 distinct models required.)
+
+result: CalibrationResult = run_calibration(
+    model_loaders={
+        "esm2_150M_short_50aa": load_esm2,
+        # "mhcflurry": load_mhcflurry,
+        # "qwen_0_5b": load_qwen,
+    },
+    output_dir=Path("./my_substrate_calibration"),
+    fit_v5_gamma=True,
+)
+
+# Use the result immediately, or load it back from disk later:
+hw_coefs = result.hw_coefs            # HardwareCoefficients
+profiles = result.profiles            # dict[str, InterferenceProfile] with theta fitted
+gamma = result.gamma_kernel_size      # float | None (V5)
+print(f"V1 LOPO mean = {result.lopo_mean_pct:.2f}%; V5 LOPO mean = {result.lopo_mean_pct_v5}")
+```
+
+### CLI
+
+```bash
+nvinx-calibrate \
+    --model my_pkg.models:load_esm2 \
+    --model my_pkg.models:load_mhcflurry \
+    --model my_pkg.models:load_qwen \
+    --output ./my_substrate_calibration \
+    --fit-v5
+```
+
+Each `--model` is a `module:attr` spec — the CLI imports the module and resolves the attribute to a zero-arg callable that returns a `ProfileTarget`. The CLI runs the full pipeline and writes `<output_dir>/calibration_result.json` (plus per-model and per-pair JSONs for auditability).
+
+### Per-step API (fine-grained control)
+
+If you want to interleave calibration with other operator workflow, the submodule also exposes the individual steps:
+
+```python
+from nvinx.calibration import (
+    sweep_hardware,        # idlef polynomial + powerp linear sweep
+    profile_model,         # per-model standalone profiling (kernels + L2 + power)
+    validate_pair,         # cross-pair co-located latency measurement
+    fit_thetas,            # least-squares theta fit on relative residuals
+    fit_v5,                # joint theta + gamma fit
+    lopo_cross_validate,   # LOPO % error summary
+    apply_thetas,          # construct new profile dict with fitted theta values
+)
+```
+
+The function-level docstrings document the residual norm (relative residuals, matching the v0.5 H5 reference convention), the VRAM-tight factory pattern for `profile_model`, and the ncu sudo / NVreg options.
 
 ---
 
