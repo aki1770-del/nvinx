@@ -347,10 +347,10 @@ If your work cites `nvinx` for any of these patterns, please cite the underlying
 
 v0.3.0a1 is **alpha** in-tree. v0.2.0a1 is the most recent PyPI release; v0.1.0 was the prior stable. Expect:
 
-- Additions in v0.3.0a1: substrate-bound V5 kernel-size-ratio correction (`predict_pair_latency_queue_aware_v5` + `fit_gamma_kernel_size` companion); `predict_pair_latency` dispatcher and `fractional_coresidency_v2` both accept an optional `gamma_kernel_size` kwarg; calibration docs Step 6 extended with V5 fitting workflow; expanded test suite (42 passing).
+- Additions in v0.3.0a1: substrate-bound V5 kernel-size-ratio correction (`predict_pair_latency_queue_aware_v5` + `fit_gamma_kernel_size` companion); `predict_pair_latency` dispatcher and `fractional_coresidency_v2` both accept an optional `gamma_kernel_size` kwarg; new turnkey `nvinx.calibration` subpackage (library API + `nvinx-calibrate` CLI; optional `[calibration]` extras pull in numpy / scipy / nvidia-ml-py); calibration docs Step 6 extended with V5 fitting workflow + "Turnkey calibration" section; expanded test suite (49 passing).
 - Additions in v0.2.0a1: substrate-native interference primitives (`nvinx.interference`), `fractional_coresidency_v2`, queue-aware prediction baseline.
-- Backward compat: v0.2 and v0.1 API surfaces are unchanged. `fractional_coresidency_v2` with `gamma_kernel_size=None` (the default) reproduces v0.2 behaviour exactly; with `interference_profiles=None` it reproduces v0.1 behaviour exactly. V5 is opt-in via an operator-fitted γ on the operator's own substrate.
-- Future: turnkey `nvinx.calibration` module (lift the operator-side calibration tooling into the public package); cross-substrate γ validation on at least one non-mobile substrate class; more patterns as edge cases surface.
+- Backward compat: v0.2 and v0.1 API surfaces are unchanged. `fractional_coresidency_v2` with `gamma_kernel_size=None` (the default) reproduces v0.2 behaviour exactly; with `interference_profiles=None` it reproduces v0.1 behaviour exactly. V5 is opt-in via an operator-fitted γ on the operator's own substrate. The base `pip install nvinx` install remains lightweight (`pyyaml` only); the calibration submodule is gated on extras.
+- Future: cross-substrate γ validation on at least one non-mobile substrate class; runtime adapters (PyTorch, HuggingFace, vLLM) as optional extras; more patterns as edge cases surface.
 - Pin your version. `SchedulingPlan` may add fields in minor releases.
 
 ---
@@ -387,7 +387,7 @@ ruff format --check .
 ruff check .
 ```
 
-42 tests in two files: `tests/test_patterns.py` (8; v0.1 patterns) and `tests/test_interference.py` (34; v0.2 queue-aware + v0.3 V5 + fit_gamma + dispatcher routing + backward-compat). CI runs on every push and PR across Python 3.10–3.12.
+49 tests in three files: `tests/test_patterns.py` (8; v0.1 patterns), `tests/test_interference.py` (34; v0.2 queue-aware + v0.3 V5 + fit_gamma + dispatcher routing + backward-compat), and `tests/test_calibration_fit.py` (7; v0.3 calibration submodule synthetic-data fit / LOPO). The 7 calibration tests gracefully skip on default installs without `[calibration]` extras. CI runs on every push and PR across Python 3.10–3.12.
 
 ---
 

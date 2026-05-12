@@ -4,9 +4,9 @@ All notable changes to `nvinx` are documented here. The project loosely follows 
 
 ---
 
-## [0.3.0a1] — 2026-05-12 — substrate-bound V5 kernel-size-ratio correction (alpha)
+## [0.3.0a1] — 2026-05-12 — substrate-bound V5 kernel-size-ratio correction + turnkey calibration (alpha)
 
-### Added
+### Added — V5 substrate-bound kernel-size-ratio correction (`nvinx.interference`)
 
 - `predict_pair_latency_queue_aware_v5(profile_a, profile_b, hw, *, gamma_kernel_size=None)` — extends the v0.2 queue-aware formula with one optional empirical scalar `gamma_kernel_size` that captures the asymmetric blocking of small-kernel models by large-kernel partners. Formula: `latency_self = act_self × (1 + theta × partner_frac × (1 + gamma × kernel_size_ratio)) + scheduling_delay + baseidle_self`. When `gamma_kernel_size` is `None` (default) or `0.0`, the function is bit-identical to v0.2's `predict_pair_latency_queue_aware`.
 - `fit_gamma_kernel_size(profiles, pair_measurements, hw)` — closed-form weighted least-squares fit for the substrate-specific γ given operator-fitted thetas. Minimises *relative* residuals (`((pred − observed) / observed)²`) via pure-stdlib weighted-LS — no `numpy` / `scipy` dependency added. Matches the residual-norm convention an operator gets from running `scipy.optimize.least_squares` on relative residuals (the appropriate norm for substrates with wide `act_solo` spread across the corpus).
@@ -14,6 +14,24 @@ All notable changes to `nvinx` are documented here. The project loosely follows 
 - `fractional_coresidency_v2` accepts a new optional `gamma_kernel_size` kwarg; threads through to per-pair predictions via the dispatcher. When `None` (default), v0.2 behaviour is reproduced exactly.
 - New "Step 6: Fit `gamma_kernel_size` (optional v0.6 alpha)" in [`docs/calibrating-your-substrate.md`](docs/calibrating-your-substrate.md): kernel-size-ratio mechanism; when V5 helps (asymmetric small-kernel-vs-large-kernel pairs on small-SM substrates); when V5 may not help (datacenter-class GPUs with many SMs; cache-contention-dominated physics; iGniter cross-substrate evidence); operator workflow for fitting γ via `fit_gamma_kernel_size`.
 - 13 new tests in `tests/test_interference.py` covering: backward-compat (γ=None/0.0 produce bit-identical output to v0.2), V5 inflation on asymmetric kernel-size-ratio pairs, theta-required and kernel-zero safety, synthetic γ recovery, error-path coverage, dispatcher routing source labels, `fractional_coresidency_v2` accepts new kwarg without breaking existing callers.
+
+### Added — Turnkey calibration submodule (`nvinx.calibration`)
+
+- New subpackage `nvinx.calibration` lifting the per-step calibration tooling into a library API + CLI so operators no longer need to write their own scripts. Public surface:
+  - `CalibrationResult` dataclass — end-to-end output (`HardwareCoefficients` + fitted `InterferenceProfile`s + pair measurements + LOPO summary + optional V5 γ).
+  - `ProfileTarget` dataclass — operator-supplied bundle of `name` + `inference_fn` + `sample_input` + `loader_code` (used by the ncu subprocess) + `canonical_batch`.
+  - `sweep_hardware()` — substrate-agnostic idlef polynomial + powerp linear sweep. Detects GPU name / nominal clock / TDP via `nvidia-smi`.
+  - `profile_model(loader, ...)` — per-model standalone profiling with VRAM-tight factory pattern (loader called inside, parent's model freed before ncu subprocess, re-loaded for k_l2 measurement).
+  - `validate_pair(target_a, target_b, ...)` — cross-pair co-located latency measurement on separate CUDA streams.
+  - `fit_thetas(profiles, pair_measurements, hw)` — V1 baseline theta fit via `scipy.optimize.least_squares` on relative residuals.
+  - `fit_v5(profiles, pair_measurements, hw)` — joint theta + V5 γ fit (bit-equivalent to the v0.5 H5 reference).
+  - `lopo_cross_validate(profiles, pair_measurements, hw, *, refit_v5=False)` — leave-one-pair-out cross-validation summary.
+  - `apply_thetas(profiles, thetas)` — construct a new dict of `InterferenceProfile` with fitted theta values applied.
+  - `run_calibration(model_loaders, *, output_dir, fit_v5_gamma=False, ...)` — end-to-end orchestrator.
+- New CLI entry point `nvinx-calibrate` (`[project.scripts]`). Operator supplies `--model module.path:loader_fn` specs (≥ 3 required); CLI imports each loader via `importlib`, runs the full pipeline, writes `<output_dir>/calibration_result.json`.
+- New optional dependencies via extras: `pip install 'nvinx[calibration]'` installs `numpy >= 1.24`, `scipy >= 1.10`, `nvidia-ml-py >= 12.0`. The base nvinx install remains lightweight (`pyyaml` only). System prerequisite: `ncu` (Nsight Compute) installed and accessible (either `sudo ncu` or `NVreg_RestrictProfilingToAdminUsers=0`).
+- 7 new tests in `tests/test_calibration_fit.py` (synthetic-data; pure math; no GPU required). All gated on `pytest.importorskip("scipy")` so they cleanly skip on default installs without the `[calibration]` extras.
+- Updated [`docs/calibrating-your-substrate.md`](docs/calibrating-your-substrate.md) with a new "Turnkey calibration via `nvinx.calibration`" section documenting the library API + CLI examples + per-step API reference.
 
 ### Honest scope
 
@@ -28,7 +46,7 @@ All notable changes to `nvinx` are documented here. The project loosely follows 
 
 ### Tests
 
-- 42 tests pass (8 v0.1 patterns + 34 v0.2 / v0.3 interference). CI green on Python 3.10 / 3.11 / 3.12.
+- 49 tests in total: 42 always-available (8 v0.1 patterns + 34 v0.2 / v0.3 interference) + 7 calibration-extras-gated. The 7 calibration tests gracefully skip on default installs without `[calibration]` extras. CI green on Python 3.10 / 3.11 / 3.12.
 
 ---
 
