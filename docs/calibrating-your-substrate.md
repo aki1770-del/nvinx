@@ -151,6 +151,39 @@ Re-run leave-one-pair-out CV using `predict_pair_latency_queue_aware_v5` and com
 
 A single-parameter fit on too few pairs overfits; aim for ≥ 6 pairs spanning a range of `kernel_size_ratio` (mix small-kernel and large-kernel models in your corpus).
 
+### γ-fit precision (v0.3.0a2+ advisory warning)
+
+`fit_gamma_kernel_size` emits a `RuntimeWarning` when called with fewer than 6 pair measurements. A diagnostic deep-profile on the reference Ampere mobile substrate in 2026-05-16 showed γ moved 10× between a 10-pair fit (0.0331) and a 3-pair fit (0.3164) on the same substrate — the γ-fit landscape is shallow at the 3-pair LOPO floor and the fitted value is corpus-sensitive. The 6-pair threshold is the empirical floor below which γ is unreliable.
+
+If you have only 3–5 pairs and the warning fires, treat the fitted γ as a preliminary estimate. Add more pairs (more model combinations) before shipping γ alongside your profiles.
+
+### Substrate-class gate (v0.3.0a2+ advisory warning)
+
+`predict_pair_latency_queue_aware_v5` and (transitively) `fractional_coresidency_v2` emit a `RuntimeWarning` when called with a **non-zero** `gamma_kernel_size` AND the runtime substrate is detected as datacenter-class (SM count > 64 + VRAM ≥ 16 GB, via NVML).
+
+The published reference value `γ ≈ 0.7456` was fitted on a 4 GB RTX A1000 mobile substrate (16 SMs, sm_86, 4 MB L2 cache, transformer/LLM workload mix). A first-party cross-substrate validation on an A100 SXM4 40 GB datacenter substrate (108 SMs, sm_80, 40 MB L2 cache) in 2026-05-15 measured γ = 0.0331 — a 22.5× collapse from the mobile reference. Under that A100 measurement, V5 LOPO mean error was 15.54 % vs V1 (queue-aware baseline) 14.67 % — **V5 makes datacenter predictions worse, not better**. The mechanism story: on the A100's 40 MB L2 cache (10× larger than mobile), L2 saturation never causes throttling, and the kernel-size-ratio asymmetry V5 captures doesn't fire.
+
+When the gate fires on your substrate, you have three options:
+
+1. **Pass `gamma_kernel_size=0` (or `None`)** — reduces V5 to the V1 queue-aware baseline. This is the recommended default for datacenter substrates.
+2. **Refit γ on your own substrate via `fit_gamma_kernel_size`** — produces a substrate-specific γ value. Validate via LOPO; if V5 LOPO is comparable or worse than V1 LOPO on your substrate (as observed for A100), prefer V1.
+3. **Suppress the warning** if you've already validated V5 on your substrate:
+   ```python
+   import warnings
+   warnings.filterwarnings("ignore", category=RuntimeWarning, module="nvinx.substrate")
+   ```
+
+The gate is **advisory only**. It does NOT override your `gamma_kernel_size` value. The operator-controlled discipline of this calibration workflow (you fit, you choose) is preserved.
+
+To inspect the detected substrate explicitly:
+```python
+from nvinx import detect_substrate
+info = detect_substrate()
+print(info)
+```
+
+If `detect_substrate()` returns `substrate_class="unknown"`, the classifier couldn't decide (intermediate SM count or VRAM; or NVML unavailable). The gate emits no warning in this case — operator decides.
+
 ---
 
 ## Turnkey calibration via `nvinx.calibration` (v0.3.0a1+)

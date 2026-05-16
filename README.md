@@ -307,6 +307,22 @@ On the reference bench's 7-model 19-pair corpus, V5 with operator-fitted γ redu
 
 ---
 
+## v0.3.0a2 (in-tree, alpha): substrate-class gate + γ-fit precision guidance
+
+v0.3.0a2 adds a runtime advisory gate that warns operators when a non-zero `gamma_kernel_size` is passed on a datacenter-class GPU — where the published mobile-substrate reference γ ≈ 0.7456 is empirically known NOT to transfer (a 2026-05-15 first-party cross-substrate validation on an Ampere datacenter substrate measured γ = 0.0331, a 22.5× collapse, with V5 LOPO actually WORSE than V1 baseline on that substrate). The gate is **advisory only** and **does not override the operator's value** — the operator-controlled discipline established in `docs/calibrating-your-substrate.md` is preserved.
+
+**New module `nvinx.substrate`** provides best-effort NVML-based runtime detection of the GPU substrate class (datacenter / mobile / unknown). `detect_substrate()` returns a `SubstrateInfo` dataclass; `warn_if_datacenter_with_nonzero_gamma(gamma)` is the gate helper. The classification thresholds (SM count > 64 + VRAM ≥ 16 GB → datacenter; SM count ≤ 48 OR VRAM < 12 GB → mobile) are calibrated against known GPU lineups; intermediate substrates classify as "unknown" and emit no warning.
+
+**`predict_pair_latency_queue_aware_v5` now calls the gate** when a non-zero γ is supplied. `fractional_coresidency_v2` inherits the gate transitively via `predict_pair_latency`. The warning message includes the detected GPU name + SM count + VRAM + the cross-substrate evidence pointer; operators can suppress via the standard `warnings.filterwarnings` mechanism.
+
+**γ-fit precision warning**: `fit_gamma_kernel_size` now emits `RuntimeWarning` when called with fewer than 6 pair measurements. A diagnostic deep-profile on the Ampere mobile native substrate in 2026-05-16 showed γ moved 10× between 10-pair (0.0331) and 3-pair (0.3164) fits on the same substrate — the γ-fit landscape is shallow at the 3-pair LOPO floor and the fitted value is corpus-sensitive. **Operator guidance: ≥6 pairs (≥5 models) for stable γ.**
+
+**Backward compatibility.** v0.3.0a1 API surface is unchanged. Existing callers see no behaviour change other than the new advisory `RuntimeWarning`s, which can be filtered. v0.2 + v0.1 API surfaces unchanged.
+
+**Tests**: 70 total (49 from v0.3.0a1 + 21 new in `tests/test_substrate.py` covering classifier unit tests across Ampere datacenter / Hopper datacenter / Volta datacenter / Ada datacenter / Ampere mobile / Ada mobile / intermediate-edge / no-data / partial-data; `detect_substrate` integration test; warning behaviour tests; `fit_gamma_kernel_size` <6-pairs warning test). All green.
+
+---
+
 ## Data model
 
 Four types live in `src/nvinx/catalog.py`:
@@ -345,9 +361,10 @@ If your work cites `nvinx` for any of these patterns, please cite the underlying
 
 ## Status and stability
 
-v0.3.0a1 is **alpha** in-tree. v0.2.0a1 is the most recent PyPI release; v0.1.0 was the prior stable. Expect:
+v0.3.0a2 is **alpha** in-tree (extends v0.3.0a1 with the substrate-class gate). v0.2.0a1 is the most recent PyPI release as of this writing; v0.1.0 was the prior stable. Expect:
 
 - Additions in v0.3.0a1: substrate-bound V5 kernel-size-ratio correction (`predict_pair_latency_queue_aware_v5` + `fit_gamma_kernel_size` companion); `predict_pair_latency` dispatcher and `fractional_coresidency_v2` both accept an optional `gamma_kernel_size` kwarg; new turnkey `nvinx.calibration` subpackage (library API + `nvinx-calibrate` CLI; optional `[calibration]` extras pull in numpy / scipy / nvidia-ml-py); calibration docs Step 6 extended with V5 fitting workflow + "Turnkey calibration" section; expanded test suite (49 passing).
+- Additions in v0.3.0a2: new `nvinx.substrate` module with NVML-based substrate-class detection (`detect_substrate` returning `SubstrateInfo`); advisory `RuntimeWarning` gate in `predict_pair_latency_queue_aware_v5` for non-zero γ on datacenter-class substrates (Ampere datacenter cross-substrate measurement 2026-05-15: γ collapsed 22.5× vs mobile reference; V5 worse than V1 on that substrate); γ-fit precision `RuntimeWarning` in `fit_gamma_kernel_size` when called with <6 pair measurements; advisory only (operator override always respected); test suite expanded to 70 passing.
 - Additions in v0.2.0a1: substrate-native interference primitives (`nvinx.interference`), `fractional_coresidency_v2`, queue-aware prediction baseline.
 - Backward compat: v0.2 and v0.1 API surfaces are unchanged. `fractional_coresidency_v2` with `gamma_kernel_size=None` (the default) reproduces v0.2 behaviour exactly; with `interference_profiles=None` it reproduces v0.1 behaviour exactly. V5 is opt-in via an operator-fitted γ on the operator's own substrate. The base `pip install nvinx` install remains lightweight (`pyyaml` only); the calibration submodule is gated on extras.
 - Future: cross-substrate γ validation on at least one non-mobile substrate class; runtime adapters (PyTorch, HuggingFace, vLLM) as optional extras; more patterns as edge cases surface.

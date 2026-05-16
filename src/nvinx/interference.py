@@ -24,6 +24,7 @@ v0.3+ goal.
 
 from __future__ import annotations
 
+import warnings
 from collections.abc import Mapping
 from dataclasses import dataclass
 
@@ -203,7 +204,22 @@ def predict_pair_latency_queue_aware_v5(
     dominant interference physics).
 
     Both profiles must have non-None theta (fitted from cross-pair calibration).
+
+    v0.3.0a2 substrate-class gate: when a non-zero ``gamma_kernel_size`` is
+    passed AND the runtime substrate is detected as datacenter-class
+    (SM count > 64 + total VRAM ≥ 16 GB via NVML), emits a ``RuntimeWarning``
+    alerting the operator that the v0.5 reference γ ≈ 0.75 was empirically
+    measured to NOT transfer to A100-class substrates (Track C 2026-05-15;
+    γ collapsed to ~0.03). The warning does NOT override the operator's
+    value — operator-controlled discipline preserved. Suppress via the
+    standard ``warnings.filterwarnings`` mechanism.
     """
+    # v0.3.0a2 substrate-class gate (advisory; operator override respected)
+    if gamma_kernel_size is not None and gamma_kernel_size != 0.0:
+        from nvinx.substrate import warn_if_datacenter_with_nonzero_gamma
+
+        warn_if_datacenter_with_nonzero_gamma(gamma_kernel_size)
+
     if profile_a.theta is None or profile_b.theta is None:
         raise ValueError(
             f"predict_pair_latency_queue_aware_v5 requires fitted theta values; "
@@ -309,6 +325,25 @@ def fit_gamma_kernel_size(
     """
     if not pair_measurements:
         raise ValueError("pair_measurements must not be empty")
+
+    # v0.3.0a2 γ-fit precision warning (LB-B1-2 finding 2026-05-16; Path B1
+    # diagnostic deep-profile on A1000 showed γ moved 10× between 10-pair
+    # (0.0331) and 3-pair (0.3164) fits on the same substrate. Operator
+    # guidance: ≥6 pairs (≥5 models) for stable γ. Below that, the γ-fit
+    # landscape is shallow and the fitted value is corpus-sensitive.)
+    if len(pair_measurements) < 6:
+        warnings.warn(
+            (
+                f"fit_gamma_kernel_size called with {len(pair_measurements)} pair "
+                f"measurements (< 6). Path B1 diagnostic on A1000 native substrate "
+                f"(2026-05-16) showed γ-fit landscape is shallow at the 3-pair LOPO "
+                f"floor: γ moved 10× between 10-pair (0.0331) and 3-pair (0.3164) "
+                f"fits on the same substrate. Recommend ≥6 pairs (≥5 models) for "
+                f"stable γ. The fitted value below may be corpus-sensitive."
+            ),
+            category=RuntimeWarning,
+            stacklevel=2,
+        )
 
     sum_wxy = 0.0
     sum_wxx = 0.0

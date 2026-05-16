@@ -4,6 +4,50 @@ All notable changes to `nvinx` are documented here. The project loosely follows 
 
 ---
 
+## [0.3.0a2] — 2026-05-16 — substrate-class gate + γ-fit precision guidance (alpha)
+
+### Added — Substrate-class detection (`nvinx.substrate`)
+
+New module `nvinx.substrate` providing best-effort NVML-based runtime detection of the GPU substrate class (datacenter / mobile / unknown). Detection uses compute capability + SM count + total VRAM to classify; cached at module import time via `lru_cache`.
+
+- `SubstrateInfo` dataclass — detected substrate parameters (name, SM count, total memory, compute capability, classification)
+- `detect_substrate(device_index=0)` — returns `SubstrateInfo` (always; "unknown" if NVML or pynvml unavailable)
+- `warn_if_datacenter_with_nonzero_gamma(gamma_kernel_size)` — advisory gate: emits `RuntimeWarning` when a non-zero `gamma_kernel_size` is passed AND the runtime substrate is detected as datacenter-class. **Does NOT override the operator's value** — operator-controlled discipline preserved per `docs/calibrating-your-substrate.md`.
+
+### Changed — V5 substrate-class gate
+
+`predict_pair_latency_queue_aware_v5` now calls `warn_if_datacenter_with_nonzero_gamma` when a non-zero γ is supplied. The warning alerts the operator that the v0.5 reference γ ≈ 0.7456 (fitted on a 4 GB Ampere mobile substrate) was empirically measured NOT to transfer to datacenter substrates: a first-party cross-substrate validation on an Ampere datacenter substrate (108-SM, 40 GB VRAM) in 2026-05-15 produced γ = 0.0331 (a 22.5× collapse), with V5 LOPO mean error 15.54 % vs V1 baseline 14.67 % (V5 makes datacenter predictions worse, not better). The warning recommends γ = 0 (reduces to V1 queue-aware baseline) on datacenter substrates, or operator γ-refitting via `nvinx.calibration`.
+
+The gate is ADVISORY only. Operator override is respected. Suppress via:
+```python
+import warnings
+warnings.filterwarnings("ignore", category=RuntimeWarning, module="nvinx.substrate")
+```
+
+`fractional_coresidency_v2` inherits the gate transitively via its call to `predict_pair_latency` → `predict_pair_latency_queue_aware_v5`.
+
+### Added — γ-fit precision warning (`fit_gamma_kernel_size`)
+
+`fit_gamma_kernel_size` now emits `RuntimeWarning` when called with fewer than 6 pair measurements. A diagnostic deep-profile on the Ampere mobile native substrate in 2026-05-16 showed γ moved 10× between 10-pair (0.0331) and 3-pair (0.3164) fits on the same substrate — the γ-fit landscape is shallow at the 3-pair LOPO floor and the fitted value is corpus-sensitive. **Operator guidance: ≥6 pairs (≥5 models) for stable γ.**
+
+### Honest scope
+
+- The substrate-class gate is best-effort: detection requires NVML (`nvidia-ml-py` in the `[calibration]` extras OR system NVML library). If detection fails, no warning is emitted and the operator's `gamma_kernel_size` value is used as-is.
+- The classification thresholds (SM count > 64 + VRAM ≥ 16 GB → datacenter; SM count ≤ 48 OR VRAM < 12 GB → mobile) are calibrated against known GPU lineups but may not perfectly classify intermediate substrates. Intermediate substrates classify as "unknown" and emit no warning.
+- The "non-transfer to datacenter" finding is based on one first-party measurement (Ampere datacenter 108-SM 40 GB) plus the published iGniter cross-substrate evidence on a Volta-class datacenter GPU. Additional substrate-class measurements (Volta first-party, Hopper, mid-tier mobile families) are planned future work.
+
+### Backward compatibility
+
+- v0.3.0a1 API surface is unchanged. Existing callers of `predict_pair_latency_queue_aware_v5`, `predict_pair_latency`, `fractional_coresidency_v2`, `fit_gamma_kernel_size` see no behaviour change other than the new advisory `RuntimeWarning`s. The warnings can be filtered.
+- v0.2 + v0.1 API surfaces unchanged.
+
+### Tests
+
+- 21 new tests in `tests/test_substrate.py`: classifier unit tests against known GPU lineups across Ampere datacenter / Hopper datacenter / Volta datacenter / Ada datacenter / Ampere mobile / Ada mobile / intermediate-edge / no-data / partial-data; `detect_substrate` integration test; `warn_if_datacenter_with_nonzero_gamma` behaviour tests (None/0.0 skip; datacenter fires; mobile does not fire; unknown does not fire); `fit_gamma_kernel_size` <6-pairs warning test.
+- 70 tests total: 49 existing + 21 new. All green.
+
+---
+
 ## [0.3.0a1] — 2026-05-12 — substrate-bound V5 kernel-size-ratio correction + turnkey calibration (alpha)
 
 ### Added — V5 substrate-bound kernel-size-ratio correction (`nvinx.interference`)

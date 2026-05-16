@@ -19,8 +19,9 @@ from nvinx.patterns import (
     ram_overflow,
     serial_handoff,
 )
+from nvinx.substrate import SubstrateInfo, detect_substrate
 
-__version__ = "0.3.0a1"
+__version__ = "0.3.0a2"
 
 __all__ = [
     # v0.1 catalog
@@ -46,5 +47,8 @@ __all__ = [
     "predict_pair_latency_queue_aware_v5",
     # v0.2 enhanced patterns
     "fractional_coresidency_v2",
+    # v0.3.0a2 — substrate-class detection (advisory gate; operator override respected)
+    "SubstrateInfo",
+    "detect_substrate",
     "__version__",
 ]
